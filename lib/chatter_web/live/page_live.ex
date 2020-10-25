@@ -1,39 +1,52 @@
 defmodule ChatterWeb.PageLive do
   use ChatterWeb, :live_view
+  alias Chatter.Chatroom.Message
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, query: "", results: %{})}
+    if connected?(socket) do
+      Message.subscribe()
+    end
+
+    message_list = Message.get_latest(100, "default")
+
+    socket =
+      socket
+      |> assign(message_list: message_list)
+      |> assign(message: %Message{})
+      |> assign(changeset: Message.changeset(%Message{}, %{}))
+
+    {:ok, socket}
   end
 
   @impl true
-  def handle_event("suggest", %{"q" => query}, socket) do
-    {:noreply, assign(socket, results: search(query), query: query)}
+  def handle_info({:message_created, message}, socket) do
+    message_list = [message | socket.assigns.message_list]
+
+    socket = assign(socket, message_list: message_list)
+
+    {:noreply, socket}
   end
 
   @impl true
-  def handle_event("search", %{"q" => query}, socket) do
-    case search(query) do
-      %{^query => vsn} ->
-        {:noreply, redirect(socket, external: "https://hexdocs.pm/#{query}/#{vsn}")}
+  def handle_event("submit", %{"message" => message_params}, socket) do
+    Message.create(message_params)
 
-      _ ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "No dependencies found matching \"#{query}\"")
-         |> assign(results: %{}, query: query)}
-    end
+    socket =
+      socket
+      |> assign(message: %Message{})
+      |> assign(changeset: Message.changeset(%Message{}, %{}))
+
+    {:noreply, socket}
   end
 
-  defp search(query) do
-    if not ChatterWeb.Endpoint.config(:code_reloader) do
-      raise "action disabled when not in development"
-    end
+  @impl true
+  def handle_event("validate", %{"message" => message_params}, socket) do
+    cs =
+      socket.assigns.message
+      |> Message.changeset(message_params)
+      |> Map.put(:action, :validate)
 
-    for {app, desc, vsn} <- Application.started_applications(),
-        app = to_string(app),
-        String.starts_with?(app, query) and not List.starts_with?(desc, ~c"ERTS"),
-        into: %{},
-        do: {app, vsn}
+    {:noreply, assign(socket, changeset: cs)}
   end
 end
